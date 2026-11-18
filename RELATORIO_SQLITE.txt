@@ -1,0 +1,160 @@
+====================================================================
+  NR BanK — RELATÓRIO DE ANÁLISE E IMPLEMENTAÇÃO DO BANCO DE DADOS
+  Data: 27/05/2026
+  Ferramenta: Claude Code (claude-sonnet-4-6)
+====================================================================
+
+----------------------------------------------------------------------
+1. VISÃO GERAL DO PROJETO
+----------------------------------------------------------------------
+O NR BanK é um aplicativo Flutter de banco digital com as seguintes
+telas:
+  • LoginScreen       (main.dart)         – Login com CPF/email + biometria
+  • CadastroScreen    (cadastro_screen.dart) – Cadastro de novo usuário
+  • HomeScreen        (home_screen.dart)   – Dashboard com saldo e movimentações
+  • TransferenciaScreen (transferencia_screen.dart) – TED/transferência bancária
+  • PixScreen         (pix_screen.dart)    – Pagamento via PIX
+  • BoletoScreen      (boleto_screen.dart) – Pagamento de boleto
+  • CartoesScreen     (cartoes_screen.dart) – Listagem de cartões de crédito
+  • ConfiguracoesScreen (configuracoes_screen.dart) – Tema, notificações, logout
+  • CotacaoScreen     (cotacao_screen.dart) – Cotação de moedas (API HTTP)
+
+----------------------------------------------------------------------
+2. PROBLEMAS IDENTIFICADOS (O QUE PRECISAVA DE BANCO DE DADOS)
+----------------------------------------------------------------------
+
+2.1 CADASTRO / LOGIN — sem persistência real
+    Arquivo: cadastro_screen.dart / main.dart
+    Problema: O cadastro salvava apenas `cadastro_realizado = true` no
+    SharedPreferences. O botão "Entrar" do login não validava nenhuma
+    credencial — qualquer clique levava direto à HomeScreen.
+    O que precisa: tabela `usuarios` com nome, CPF, email e senha.
+
+2.2 SALDO — hardcoded
+    Arquivo: home_screen.dart / transferencia_screen.dart /
+             pix_screen.dart / boleto_screen.dart
+    Problema: O saldo "R$ 6.430,77" estava escrito diretamente no código.
+    Nas telas de operação o valor era passado como argumento fixo (6430.77).
+    O que precisa: tabela `conta` com saldo real por usuário.
+
+2.3 HISTÓRICO DE TRANSAÇÕES — hardcoded
+    Arquivo: home_screen.dart
+    Problema: As movimentações ("PIX recebido +R$400,00", "Boleto -R$120,00",
+    "Transferência -R$80,00") estavam escritas diretamente no código.
+    Após uma operação real (PIX, TED, boleto) nada era persistido.
+    O que precisa: tabela `transacoes` para registrar e consultar histórico.
+
+2.4 CARTÕES — hardcoded e sem persistência
+    Arquivo: cartoes_screen.dart
+    Problema: A lista de cartões (NR BanK Black *1234, NR BanK Gold *5678)
+    estava fixada no código. O bloqueio/desbloqueio era apenas em memória —
+    ao sair da tela o estado era perdido.
+    O que precisa: tabela `cartoes` com estado de bloqueio persistido.
+
+----------------------------------------------------------------------
+3. PACOTES INSTALADOS
+----------------------------------------------------------------------
+
+Pacote          Versão    Função
+-----------     -------   -------------------------------------------
+sqflite         ^2.4.2    Interface SQLite para Flutter (Android/iOS/desktop)
+path            ^1.9.1    Montagem do caminho do arquivo do banco de dados
+
+Ambos os pacotes já estavam no cache local (~/.pub-cache).
+Comando executado: flutter pub get
+Resultado: dependências resolvidas com sucesso.
+
+----------------------------------------------------------------------
+4. ARQUIVO CRIADO: lib/database_helper.dart
+----------------------------------------------------------------------
+
+Padrão utilizado: Singleton — uma única instância do banco em toda a app.
+Banco de dados:   nr_bank.db  (armazenado na pasta de dados do app)
+
+  ┌──────────────────────────────────────────────────────────────┐
+  │                  ESTRUTURA DO BANCO                          │
+  ├───────────┬──────────────────────────────────────────────────┤
+  │ TABELA    │ COLUNAS PRINCIPAIS                               │
+  ├───────────┼──────────────────────────────────────────────────┤
+  │ usuarios  │ id, nome, cpf (UNIQUE), email (UNIQUE), senha,   │
+  │           │ foto_path, criado_em                             │
+  ├───────────┼──────────────────────────────────────────────────┤
+  │ conta     │ id, usuario_id (FK), numero_conta (UNIQUE),      │
+  │           │ saldo REAL                                       │
+  ├───────────┼──────────────────────────────────────────────────┤
+  │ transacoes│ id, conta_id (FK), tipo, descricao, valor REAL,  │
+  │           │ direcao ('entrada'|'saida'), destinatario,       │
+  │           │ data_hora                                        │
+  ├───────────┼──────────────────────────────────────────────────┤
+  │ cartoes   │ id, usuario_id (FK), nome, numero, validade,     │
+  │           │ limite REAL, fatura REAL, bloqueado INTEGER,     │
+  │           │ cor_hex                                          │
+  └───────────┴──────────────────────────────────────────────────┘
+
+Métodos implementados no DatabaseHelper:
+
+  USUÁRIOS
+    inserirUsuario(nome, cpf, email, senha)  → int (id)
+    buscarUsuarioPorLogin(login)             → Map? (cpf OU email)
+    listarUsuarios()                         → List<Map>
+
+  CONTA
+    criarConta(usuarioId, numeroConta, saldoInicial)  → int (id)
+    buscarConta(usuarioId)                            → Map?
+    atualizarSaldo(contaId, novoSaldo)               → void
+
+  TRANSAÇÕES
+    registrarTransacao(contaId, tipo, valor, direcao, ...)  → int (id)
+      ↳ já atualiza o saldo automaticamente após cada operação
+    listarTransacoes(contaId, limite: 20)                   → List<Map>
+
+  CARTÕES
+    inserirCartao(usuarioId, nome, numero, validade, limite, ...)  → int
+    listarCartoes(usuarioId)                                       → List<Map>
+    toggleBloqueioCartao(cartaoId, bloqueado)                      → void
+
+----------------------------------------------------------------------
+5. PRÓXIMOS PASSOS (O QUE AINDA PRECISA SER FEITO)
+----------------------------------------------------------------------
+
+Os passos abaixo NÃO foram implementados nesta etapa; são a integração
+das telas com o DatabaseHelper:
+
+  a) CadastroScreen → substituir prefs.setBool por DatabaseHelper
+     .inserirUsuario() + .criarConta() (com número de conta gerado
+     automaticamente).
+
+  b) LoginScreen → validar CPF/email e senha contra a tabela `usuarios`
+     em vez de navegar direto para /home.
+
+  c) HomeScreen → carregar saldo e transações via DatabaseHelper
+     (.buscarConta() e .listarTransacoes()) em vez de valores fixos.
+
+  d) TransferenciaScreen / PixScreen / BoletoScreen → após confirmar
+     a operação, chamar DatabaseHelper.registrarTransacao() para
+     persistir e atualizar o saldo real.
+
+  e) CartoesScreen → carregar lista do banco (.listarCartoes()) e
+     persistir bloqueio (.toggleBloqueioCartao()).
+
+  f) Segurança: a senha deve ser armazenada com hash (ex: bcrypt ou
+     SHA-256+salt) — nunca em texto puro.
+
+----------------------------------------------------------------------
+6. RESUMO DO QUE FOI FEITO NESTA SESSÃO
+----------------------------------------------------------------------
+
+  [✓] Análise completa de todos os arquivos Dart do projeto
+  [✓] Identificação dos 4 pontos que precisam de banco de dados
+  [✓] Adição de sqflite ^2.4.2 e path ^1.9.1 ao pubspec.yaml
+  [✓] Execução de `flutter pub get` (dependências resolvidas)
+  [✓] Criação de lib/database_helper.dart com:
+       – 4 tabelas SQL (usuarios, conta, transacoes, cartoes)
+       – Métodos CRUD para cada tabela
+       – Atualização automática de saldo ao registrar transação
+       – Padrão Singleton seguro para uso em toda a aplicação
+  [✓] Criação deste arquivo de relatório
+
+====================================================================
+  FIM DO RELATÓRIO
+====================================================================
